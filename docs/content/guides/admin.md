@@ -2,7 +2,7 @@
 title: Admin Panel
 ---
 
-Open the user menu in the top-right corner and select **Admin Panel**. Choose **General**, **Config**, **Interface**, or **Hooks** in the sidebar. Use **Save** to apply form changes and **Revert** to discard unsaved changes.
+Open the user menu in the top-right corner and select **Admin Panel**. Choose **General**, **Config**, **Interface**, **Firewall & monitoring**, or **Hooks** in the sidebar. Use **Save** to apply form changes and **Revert** to discard unsaved changes.
 
 ## General Settings
 
@@ -61,6 +61,10 @@ If `PreUp` sets a socket mark, wg-easy uses it. When wg-easy assigns a new mark,
 If the userspace WireGuard or AmneziaWG daemon exits, the next maintenance check restarts the tunnel with its active port and address ranges. Connected peers must establish a new handshake.
 
 The address in the CIDR selects the server's gateway address. A network address keeps the first host as the gateway, preserving existing setups: `10.8.0.0/24` uses `10.8.0.1`. To choose another gateway, enter it directly, for example `10.8.0.15/24`. Clients then use available addresses from `10.8.0.1` through `10.8.0.254`, excluding `10.8.0.15`. The same rule applies to IPv6 and unattended setup CIDRs. The network and last address remain reserved for both address families.
+
+### Independent Firewall Policies
+
+**Firewall & monitoring** manages global, group and peer rules independently of routing, including ALLOW/DENY exceptions, default peer isolation, traffic logs and alert notifications. See the [firewall guide](./firewall.md). Enabling policy mode replaces the legacy permissions below; existing installations remain in legacy mode until enabled explicitly.
 
 ### Per-Client Firewall
 

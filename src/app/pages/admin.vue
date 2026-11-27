@@ -47,6 +47,7 @@ const menuItems = computed(() => [
   { id: 'general', name: t('admin.general.title') },
   { id: 'config', name: t('admin.config.title') },
   { id: 'interface', name: t('admin.interface.title') },
+  { id: 'firewall', name: t('firewallAdmin.title') },
   { id: 'hooks', name: t('admin.hooks.title') },
 ]);
 

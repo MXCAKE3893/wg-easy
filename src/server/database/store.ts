@@ -5,6 +5,7 @@ import { UserConfigRepository } from './repositories/userConfig/repository';
 import { OneTimeLinkRepository } from './repositories/oneTimeLink/repository';
 import { UserRepository } from './repositories/user/repository';
 import { GeneralRepository } from './repositories/general/repository';
+import { FirewallRepository } from './repositories/firewall/repository';
 import type { DBExecutor, DBType } from './types';
 
 function repositories(db: DBExecutor, interfaceName: string) {
@@ -16,6 +17,7 @@ function repositories(db: DBExecutor, interfaceName: string) {
     oneTimeLinks: new OneTimeLinkRepository(db),
     users: new UserRepository(db),
     general: new GeneralRepository(db),
+    firewall: new FirewallRepository(db, interfaceName),
   };
 }
 

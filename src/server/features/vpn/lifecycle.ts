@@ -250,14 +250,14 @@ async function apply(mode?: ApplyMode, manualRestart = false) {
   if (state.recoveringPostUp) {
     await stopTunnel(state, state.recoveringPostUp);
   }
-  const { savedNetwork, clients, hooks, defaults } = await database.transaction(
-    async (tx) => ({
+  const { savedNetwork, clients, hooks, defaults, policy } =
+    await database.transaction(async (tx) => ({
       savedNetwork: await tx.interfaces.get(),
       clients: await tx.clients.getAll(),
       hooks: await tx.hooks.get(),
       defaults: await tx.userConfigs.get(),
-    })
-  );
+      policy: await tx.firewall.get(),
+    }));
   const enableIpv6 = !WG_ENV.DISABLE_IPV6;
   const defaultTables = defaultRoutePolicy(
     savedNetwork.routingTable,
@@ -375,7 +375,7 @@ async function apply(mode?: ApplyMode, manualRestart = false) {
   }
   const syncSites = () => state.tunnel.sites.sync(network, clients, enableIpv6);
   const rebuildFirewall = () =>
-    firewall.rebuildRules(network, clients, defaults, enableIpv6);
+    firewall.rebuildRules(network, clients, defaults, enableIpv6, policy);
 
   let siteError;
   let mtuError;
@@ -392,7 +392,13 @@ async function apply(mode?: ApplyMode, manualRestart = false) {
           enableIpv6
         );
         if (verified.length) {
-          await firewall.rebuildRules(network, verified, defaults, enableIpv6);
+          await firewall.rebuildRules(
+            network,
+            verified,
+            defaults,
+            enableIpv6,
+            policy
+          );
         }
       }
       throw error;

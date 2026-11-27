@@ -4,6 +4,12 @@ import { createDebug } from 'obug';
 import { isIPv6 } from 'is-ip';
 import { createError } from 'nuxt/server';
 
+import {
+  compilePolicy,
+  policyChains,
+} from '#server/features/firewall/compiler';
+import { policyApplied, policyFailed } from '#server/features/firewall/runtime';
+import type { FirewallPolicy } from '#shared/contracts/firewall';
 import { exec } from '#server/utils/cmd';
 import { normalizePrefix } from '#server/utils/ip';
 import type { ClientType } from '#db/repositories/client/types';
@@ -90,6 +96,18 @@ async function finishRebuild(interfaceName: string, enableIpv6: boolean) {
         }
       }
     }
+  }
+}
+
+async function removePolicyChains(command: string, name: string) {
+  const existing: string[] = [];
+  for (const chain of policyChains(name)) {
+    if (await removeIfPresent(`${command} -F ${chain}`)) {
+      existing.push(chain);
+    }
+  }
+  for (const chain of existing) {
+    await exec(`${command} -X ${chain}`);
   }
 }
 
@@ -397,12 +415,16 @@ export const firewall = {
     wgInterface: InterfaceType,
     clients: FirewallClient[],
     userConfig: UserConfigType,
-    enableIpv6: boolean
+    enableIpv6: boolean,
+    snapshot?: { revision: number; policy: FirewallPolicy }
   ): Promise<void> {
     const result = pendingRebuild.then(async () => {
       if (!wgInterface.firewallEnabled) {
         FW_DEBUG('Firewall filtering disabled, removing any existing rules');
         await this.removeFiltering(wgInterface.name, enableIpv6);
+        if (snapshot) {
+          policyApplied(snapshot.revision, snapshot.policy);
+        }
         return;
       }
 
@@ -419,6 +441,45 @@ export const firewall = {
 
       // Flush existing rules
       await this.flushChain(wgInterface.name, enableIpv6);
+
+      // Compile each family before changing policy subchains. Guards remain
+      // installed until both complete snapshots have been attached.
+      if (snapshot?.policy.enabled) {
+        const plans = commands(enableIpv6).map((command) => ({
+          command,
+          plan: compilePolicy(
+            wgInterface.name,
+            clients.map((client) => ({
+              ...client,
+              serverAllowedIps: client.serverAllowedIps ?? [],
+            })),
+            snapshot.policy,
+            command === ipv6Tables
+          ),
+        }));
+        for (const { command, plan } of plans) {
+          for (const chain of plan.chains) {
+            await exec(
+              `${command} -N ${chain} 2>/dev/null || ${command} -S ${chain} >/dev/null`
+            );
+          }
+          for (const chain of plan.chains) {
+            await exec(`${command} -F ${chain}`);
+          }
+          for (const rule of plan.rules) {
+            await exec(`${command} ${rule}`);
+          }
+        }
+        await this.initChain(wgInterface.name, enableIpv6, true, 2);
+        await finishRebuild(wgInterface.name, enableIpv6);
+        policyApplied(snapshot.revision, snapshot.policy);
+        return;
+      }
+
+      // Legacy mode no longer references independent policy subchains.
+      for (const command of commands(enableIpv6)) {
+        await removePolicyChains(command, wgInterface.name);
+      }
 
       // Apply rules for each enabled client
       for (const client of clients) {
@@ -451,10 +512,19 @@ export const firewall = {
       // Keep the DROP guard first, including if removing it later fails.
       await this.initChain(wgInterface.name, enableIpv6, true, 2);
       await finishRebuild(wgInterface.name, enableIpv6);
+      if (snapshot) {
+        policyApplied(snapshot.revision, snapshot.policy);
+      }
       FW_DEBUG('Firewall rules rebuilt successfully');
     });
-    pendingRebuild = result.catch(() => {});
-    return result;
+    const observed = result.catch((error) => {
+      if (snapshot?.policy.enabled) {
+        policyFailed();
+      }
+      throw error;
+    });
+    pendingRebuild = observed.catch(() => {});
+    return observed;
   },
 
   /** Remove the interface-specific filtering after link deletion. */
@@ -474,6 +544,7 @@ export const firewall = {
       if (await removeIfPresent(`${command} -F ${chain}`)) {
         await exec(`${command} -X ${chain}`);
       }
+      await removePolicyChains(command, interfaceName);
     }
   },
 
@@ -501,6 +572,7 @@ export const firewall = {
       }
       await exec(`${command} -F ${chain} 2>/dev/null || true`);
       await exec(`${command} -X ${chain} 2>/dev/null || true`);
+      await removePolicyChains(command, interfaceName);
       for (const parent of trafficChains) {
         await exec(
           `while ${command} -C ${parent} ${rebuildGuard(interfaceName)} 2>/dev/null; do ${command} -D ${parent} ${rebuildGuard(interfaceName)} || exit 1; done`

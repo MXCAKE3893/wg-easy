@@ -1,0 +1,36 @@
+services:
+  wg-easy:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    command: dev
+    init: true
+    environment:
+      INIT_ENABLED: "false"
+      INSECURE: "true"
+      DISABLE_IPV6: "false"
+    ports:
+      - "127.0.0.1:8088:51821/tcp"
+      - "127.0.0.1:51822:51820/udp"
+    volumes:
+      - local_wireguard_dualstack:/etc/wireguard
+      - /lib/modules:/lib/modules:ro
+    tmpfs:
+      - /app/.nuxt
+    cap_add:
+      - NET_ADMIN
+    sysctls:
+      net.ipv4.ip_forward: "1"
+      net.ipv4.conf.all.src_valid_mark: "1"
+      net.ipv6.conf.all.disable_ipv6: "0"
+      net.ipv6.conf.all.forwarding: "1"
+      net.ipv6.conf.default.forwarding: "1"
+    networks:
+      - local
+
+volumes:
+  local_wireguard_dualstack:
+
+networks:
+  local:
+    enable_ipv6: true

@@ -1,11 +1,19 @@
 #!/bin/sh
 # Select the iptables backend, then run the given command.
-# iptables-legacy stays the default. iptables-nft is only used when the
-# kernel has no legacy xtables support (e.g. CONFIG_NETFILTER_XTABLES_LEGACY=n).
+# Prefer legacy only if every required address family and table is usable.
+# Some Docker Desktop kernels support legacy IPv4 but not legacy IPv6 NAT.
+backend_works() {
+  "iptables-$1" -w 2 -S >/dev/null 2>&1 &&
+    "iptables-$1" -w 2 -t nat -S >/dev/null 2>&1 || return 1
+  if [ "${DISABLE_IPV6:-false}" != "true" ]; then
+    "ip6tables-$1" -w 2 -S >/dev/null 2>&1 &&
+      "ip6tables-$1" -w 2 -t nat -S >/dev/null 2>&1 || return 1
+  fi
+}
 
-if iptables-legacy -w -L -n >/dev/null 2>&1; then
+if backend_works legacy; then
   backend=legacy
-elif iptables-nft -L -n >/dev/null 2>&1; then
+elif backend_works nft; then
   backend=nft
 fi
 

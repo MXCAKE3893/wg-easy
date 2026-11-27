@@ -5,6 +5,8 @@ import { setDatabase } from '#db';
 import * as vpn from '#server/features/vpn/lifecycle';
 import { initialize } from '#server/features/setup';
 import { startMaintenance } from '#server/jobs/maintenance';
+import { startSecurityMonitor } from '#server/features/firewall/monitor';
+import { recordEvent } from '#server/features/firewall/runtime';
 import { RELEASE, OLD_ENV, WG_ENV, WG_INITIAL_ENV } from '#server/utils/config';
 
 export default defineNitroPlugin(async (nitroApp) => {
@@ -47,10 +49,30 @@ export default defineNitroPlugin(async (nitroApp) => {
     database.close();
     throw error;
   }
-  const stopMaintenance = startMaintenance(vpn.maintain);
+  const stopSecurityMonitor = startSecurityMonitor();
+  let maintenanceFailed = false;
+  const stopMaintenance = startMaintenance(async () => {
+    try {
+      await vpn.maintain();
+      if (maintenanceFailed) {
+        recordEvent({ kind: 'recovery', message: 'VPN maintenance recovered' });
+      }
+      maintenanceFailed = false;
+    } catch (error) {
+      if (!maintenanceFailed) {
+        recordEvent({
+          kind: 'failure',
+          message: 'VPN maintenance failed; automatic retry pending',
+        });
+      }
+      maintenanceFailed = true;
+      throw error;
+    }
+  });
   nitroApp.hooks.hook('close', async () => {
     console.log('Shutting down');
     await stopMaintenance();
+    await stopSecurityMonitor();
     try {
       await vpn.stop();
     } finally {

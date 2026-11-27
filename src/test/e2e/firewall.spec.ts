@@ -1,3 +1,8 @@
+import {
+  defaultFirewallPolicy,
+  type FirewallRule,
+} from '../../shared/contracts/firewall';
+
 import { credentials, expect, test } from './fixtures';
 
 test.use({ ipv6: true });
@@ -61,7 +66,7 @@ test('a routed LAN can reply to an allowed TCP connection from a VPN peer', asyn
     [],
     [`${site4}:443/tcp`, `[${site6}]:443/tcp`]
   );
-  await connectPeer(2, 'Gateway', routes, ['10.8.0.1']);
+  const gateway = await connectPeer(2, 'Gateway', routes, ['10.8.0.1']);
   await app.execClient(['ip', 'addr', 'add', site4 + '/32', 'dev', 'lo'], 2);
   await app.execClient(['ip', 'addr', 'add', site6 + '/128', 'dev', 'lo'], 2);
 
@@ -88,4 +93,97 @@ test('a routed LAN can reply to an allowed TCP connection from a VPN peer', asyn
     expect(await connect(1, admin, site)).toBe('ok');
     await expect(connect(2, site, admin)).rejects.toMatchObject({ code: 1 });
   }
+
+  const unchangedConfiguration = await (
+    await request.get(`/api/client/${peer.id}/configuration`)
+  ).text();
+  const independent = { ...defaultFirewallPolicy(), enabled: true };
+  async function applyPolicy() {
+    const { revision } = await (
+      await request.get('/api/admin/firewall')
+    ).json();
+    const response = await request.post('/api/admin/firewall', {
+      headers,
+      data: { revision, policy: independent },
+    });
+    expect(await response.text()).toContain('"success":true');
+    expect(response.ok()).toBe(true);
+  }
+  const makeRule = (data: Partial<FirewallRule>): FirewallRule => ({
+    id: 'rule',
+    name: 'Policy test',
+    enabled: true,
+    scope: 'global',
+    peerId: null,
+    groupId: null,
+    priority: 100,
+    action: 'ALLOW',
+    destination: 'peers',
+    targetPeerId: null,
+    cidr: null,
+    family: 'both',
+    protocol: 'tcp',
+    ports: '443',
+    log: true,
+    ...data,
+  });
+  // Merely having routes, legacy permits and established connections grants nothing.
+  await applyPolicy();
+  for (const [admin, site] of pairs) {
+    await expect(connect(1, admin, site)).rejects.toMatchObject({ code: 1 });
+  }
+  independent.groups = [{ id: 'admins', name: 'Admins', peerIds: [peer.id] }];
+  independent.rules = [
+    makeRule({
+      id: 'global-deny',
+      action: 'DENY',
+      protocol: 'any',
+      ports: null,
+    }),
+    makeRule({
+      id: 'group-site4',
+      scope: 'group',
+      groupId: 'admins',
+      destination: 'cidr',
+      cidr: site4,
+    }),
+    makeRule({
+      id: 'group-site6',
+      scope: 'group',
+      groupId: 'admins',
+      destination: 'cidr',
+      cidr: site6,
+    }),
+    makeRule({
+      id: 'specific-peer',
+      scope: 'peer',
+      peerId: peer.id,
+      targetPeerId: gateway.id,
+    }),
+  ];
+  await applyPolicy();
+  for (const [admin, site] of pairs) {
+    // Returning packets from the routed site are automatically accepted.
+    expect(await connect(1, admin, site)).toBe('ok');
+    await expect(connect(2, site, admin)).rejects.toMatchObject({ code: 1 });
+  }
+  expect(await connect(1, peer.ipv4Address, gateway.ipv4Address)).toBe('ok');
+  expect(await connect(1, peer.ipv6Address, gateway.ipv6Address)).toBe('ok');
+  independent.rules.push(
+    makeRule({
+      id: 'peer-revoke',
+      scope: 'peer',
+      peerId: peer.id,
+      destination: 'peers',
+      priority: 0,
+      action: 'DENY',
+    })
+  );
+  await applyPolicy();
+  for (const [admin, site] of pairs) {
+    await expect(connect(1, admin, site)).rejects.toMatchObject({ code: 1 });
+  }
+  expect(
+    await (await request.get(`/api/client/${peer.id}/configuration`)).text()
+  ).toBe(unchangedConfiguration);
 });

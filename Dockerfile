@@ -62,6 +62,7 @@ RUN chmod +x /usr/bin/awg /usr/bin/awg-quick
 RUN apk add --no-cache \
     dpkg \
     dumb-init \
+    dmesg \
     iptables \
     ip6tables \
     nftables \
